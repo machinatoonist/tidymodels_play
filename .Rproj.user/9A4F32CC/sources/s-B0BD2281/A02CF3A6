@@ -12,14 +12,18 @@
     "properties": {
         "tempName": "Untitled1",
         "source_window_id": "",
-        "Source": "Source"
+        "Source": "Source",
+        "cursorPosition": "132,0",
+        "scrollLine": "130",
+        "docOutlineVisible": "1",
+        "docOutlineSize": "240"
     },
     "folds": "",
-    "lastKnownWriteTime": 1615016958,
+    "lastKnownWriteTime": 1615110269,
     "encoding": "UTF-8",
     "collab_server": "",
     "source_window": "",
-    "last_content_update": 1615016958530,
+    "last_content_update": 1615110269801,
     "read_only": false,
     "read_only_alternatives": []
 }

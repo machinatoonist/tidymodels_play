@@ -47,6 +47,58 @@ employee_test %>%
   count(Attrition) %>%
   mutate(pct = round(n/sum(n)*100, 3))
 
+# 4.0 DATA PRE-PROCESSING RECIPE WORKFLOW ----
+
+employee_log_rec <- recipe(Attrition ~ ., 
+                          data = employee_training) %>%
+  # Add log transformation step
+  step_log(MonthlyRate, base = 10)
+
+# View variable roles and data types
+employee_log_rec %>%
+  summary() 
+
+# Train the telecom_log_rec object
+employee_log_rec_prep <- employee_log_rec %>% 
+  prep(training = employee_training)
+
+# View results
+employee_log_rec_prep
+
+# Apply to training data
+employee_log_rec_prep %>% 
+  bake(new_data = NULL)
+
+# The recipe, prep and bake steps can be combined to define the transformed
+# dataset
+employee_prep_tbl <- recipe(Attrition ~ ., 
+                           data = employee_training) %>%
+  # Add log transformation step
+  step_log(MonthlyRate, base = 10) %>%
+  prep() %>% bake(new_data = employee_training)
+
+# Test for multi-collinearity
+employee_training %>%
+  select_if(is.numeric) %>%
+  cor() %>% View()
+
+# * Final recipe ----
+prep_tbl <- recipe(Attrition ~ ., 
+       data = attrition) %>%
+  # Remove collinear predictors (omit outcomes with -all_outcomes() if numeric)
+  step_corr(all_numeric(), threshold = 0.9) %>%
+  # Normalise - also try step_normalize()
+  step_normalize(all_numeric()) %>%
+  # step_center(all_numeric()) %>%
+  # step_scale(all_numeric()) %>%
+  # Add log transformation step for variable that are asymmetric
+  # step_log(MonthlyRate, base = 10) %>%
+  prep() %>% bake(new_data = attrition)
+
+prep_tbl_split <- initial_split(prep_training_tbl, 
+                                prop = 0.75, 
+                                strata = Attrition)
+
 # 4.0 DEFINE AND TRAIN MODELS ----
 # Specify a logistic regression model
 logistic_model <- logistic_reg() %>% 
@@ -194,4 +246,21 @@ conf_mat(predictions_df,
   # Create a mosaic plot
   autoplot(type = "mosaic")
 
+# Final refit on final recipe ----
 
+prep_logistic_fit <- logistic_model %>% 
+  last_fit(Attrition ~ ., split = prep_tbl_split)
+
+# Collect predictions and view results
+prep_predictions_df <- prep_logistic_fit %>% 
+  collect_predictions()
+
+prep_predictions_df %>% 
+  roc_curve(truth = Attrition, .pred_No) %>% 
+  autoplot()
+
+# Calculate metrics
+last_fit_metrics(prep_predictions_df,
+                 truth = Attrition,
+                 estimate = .pred_class,  
+                 .pred_No)

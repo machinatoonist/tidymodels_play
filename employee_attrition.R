@@ -1,5 +1,15 @@
 # TIDYMODELS WORKFLOW - REGRESSION ----
 # 
+# * Definitions/Reminders: ----
+# * Accuracy = (TP + TN)/(TP + FP + TN + FN)
+# * Selectivity = TN/(TN + FN)
+# * False Positive Rate (FPR) = 1 - Selectivity (type I error)
+# * Sensitivity =  TP/(TP + FP)
+# * False Negative Rate (FNR) = 1 - Sensitivity (type II error)
+# 
+# * Search parsnip models ----
+# https://www.tidymodels.org/find/parsnip/
+# 
 # 1.0 LOAD LIBRARIES ----
 library(tidymodels)
 
@@ -264,3 +274,116 @@ last_fit_metrics(prep_predictions_df,
                  truth = Attrition,
                  estimate = .pred_class,  
                  .pred_No)
+
+
+# 8.0 CROSS VALIDATION ----
+# 
+# Create cross validation folds
+# * Define folds and metrics ----
+set.seed(290)
+
+employee_folds <- vfold_cv(employee_training, v = 5,
+                        strata = Attrition)
+
+# Create custom metrics function
+employee_metrics <- metric_set(accuracy, sens, spec, roc_auc)
+
+# * Decision Tree CV ----
+# 
+# parsnip_addin()
+# # install.packages(c("shiny", "miniUI", "rstudioapi"))
+# install.packages("parsnip_addin")
+
+dt_model <- decision_tree() %>% 
+  # Specify the engine
+  set_engine('rpart') %>% 
+  # Specify the mode
+  set_mode('classification')
+
+# Build feature engineering pipeline
+employee_recipe <- recipe(Attrition ~ .,
+                       data = employee_training) %>% 
+  # Correlation filter
+  step_corr(all_numeric(), threshold = 0.85) %>% 
+  # Normalize numeric predictors
+  step_normalize(all_numeric()) %>% 
+  # Create dummy variables
+  step_dummy(all_nominal(), -all_outcomes())
+
+# Create a workflow
+employee_dt_wkfl <- workflow() %>% 
+  # Include the model object
+  add_model(dt_model) %>% 
+  # Include the recipe object
+  add_recipe(employee_recipe)
+
+# Fit resamples
+employee_dt_rs <- employee_dt_wkfl %>% 
+  fit_resamples(resamples = employee_folds,
+                metrics = employee_metrics)
+
+# View performance metrics
+employee_dt_rs %>% 
+  collect_metrics()
+
+# Detailed cross validation results
+dt_rs_results <- employee_dt_rs %>% 
+  collect_metrics(summarize = FALSE)
+
+# Explore model performance for decision tree
+dt_rs_results %>% 
+  group_by(.metric) %>% 
+  summarize(min = min(.estimate),
+            median = median(.estimate),
+            max = max(.estimate))
+
+# Set tuning hyperparameters
+dt_tune_model <- decision_tree(cost_complexity = tune(),
+                               tree_depth = tune(),
+                               min_n = tune()) %>% 
+  # Specify engine
+  set_engine('rpart') %>% 
+  # Specify mode
+  set_mode('classification')
+
+# Create a tuning workflow
+employee_tune_wkfl <- employee_dt_wkfl %>% 
+  # Replace model
+  update_model(dt_tune_model)
+
+employee_tune_wkfl
+
+# * Logistic Model CV ----
+
+logistic_model <- logistic_reg() %>% 
+  # Specify the engine
+  set_engine('glm') %>% 
+  # Specify the mode
+  set_mode('classification')
+
+# Create workflow
+employee_logistic_wkfl <- workflow() %>% 
+  # Add model
+  add_model(logistic_model) %>% 
+  # Add recipe
+  add_recipe(employee_recipe)
+
+# Fit resamples
+employee_logistic_rs <- employee_logistic_wkfl %>% 
+  fit_resamples(resamples = employee_folds,
+                metrics = employee_metrics)
+
+# View performance metrics
+employee_logistic_rs %>%
+  collect_metrics()
+
+# Detailed cross validation results
+logistic_rs_results <- employee_logistic_rs %>% 
+  collect_metrics(summarize = FALSE)
+
+# Explore model performance for logistic regression
+logistic_rs_results %>% 
+  group_by(.metric) %>% 
+  summarize(min = min(.estimate),
+            median = median(.estimate),
+            max = max(.estimate))

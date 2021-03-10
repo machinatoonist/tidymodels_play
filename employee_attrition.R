@@ -337,7 +337,7 @@ dt_rs_results %>%
             median = median(.estimate),
             max = max(.estimate))
 
-# Set tuning hyperparameters
+# ** Set tuning hyperparameters ----
 dt_tune_model <- decision_tree(cost_complexity = tune(),
                                tree_depth = tune(),
                                min_n = tune()) %>% 
@@ -352,6 +352,71 @@ employee_tune_wkfl <- employee_dt_wkfl %>%
   update_model(dt_tune_model)
 
 employee_tune_wkfl
+
+# Hyperparameter tuning with grid search
+set.seed(214)
+dt_grid <- grid_random(parameters(dt_tune_model),
+                       size = 5)
+
+# Hyperparameter tuning
+dt_tuning <- employee_tune_wkfl %>% 
+  tune_grid(resamples = employee_folds,
+            grid = dt_grid,
+            metrics = employee_metrics)
+
+
+# Collect detailed tuning results
+dt_tuning_results <- dt_tuning %>% 
+  collect_metrics(summarize = FALSE)
+
+# Explore detailed ROC AUC results for each fold
+dt_tuning_results %>% 
+  filter(.metric == "roc_auc") %>% 
+  group_by(id) %>% 
+  summarize(min_roc_auc = min(.estimate),
+            median_roc_auc = median(.estimate),
+            max_roc_auc = max(.estimate))
+
+# Display 5 best performing models
+dt_tuning %>% 
+  show_best(metric = 'roc_auc', n = 5)
+
+# Select based on best performance
+best_dt_model <- dt_tuning %>% 
+  # Choose the best model based on roc_auc
+  select_best(metric = 'roc_auc')
+
+# Finalize your workflow
+final_employee_wkfl <- employee_tune_wkfl %>% 
+  finalize_workflow(best_dt_model)
+
+final_employee_wkfl
+
+# Train finalized decision tree workflow
+employee_final_fit <- final_employee_wkfl %>% 
+  last_fit(split = employee_split)
+
+# View performance metrics
+employee_final_fit %>% 
+  collect_metrics()
+
+# Create an ROC curve
+employee_final_fit %>% 
+  # Collect predictions
+  collect_predictions() %>%
+  # Calculate ROC curve metrics
+  roc_curve(truth = Attrition, .pred_No) %>%
+  # Plot the ROC curve
+  autoplot()
+
+dt_predictions_df <- employee_final_fit %>% 
+  collect_predictions()
+
+# Calculate metrics
+last_fit_metrics(dt_predictions_df,
+                 truth = Attrition,
+                 estimate = .pred_class,  
+                 .pred_No)
 
 # * Logistic Model CV ----
 
@@ -387,3 +452,5 @@ logistic_rs_results %>%
   summarize(min = min(.estimate),
             median = median(.estimate),
             max = max(.estimate))
+
+

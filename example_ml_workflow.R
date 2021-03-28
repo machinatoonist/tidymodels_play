@@ -5,12 +5,14 @@
 library(tidymodels)
 library(modeldata)
 library(skimr)
-
+library(tidyverse)
 
 data("Sacramento")
 
 data_tbl <- Sacramento
 response_var <- "price"
+strata <- response_var
+# response_var <- quo(response_var)
 explanatory_var <- names(data_tbl %>% select(-all_of(response_var)))
 
 # Need to figure out to put vector value into ggplot
@@ -24,10 +26,16 @@ glimpse(data_tbl)
 
 
 # Plot the histogram
-ggplot(data_tbl, aes(x = price)) +
+plot_histogram <- function(df, column){
+  column <- enquo(column)
+  # x_label <- ifelse(label == "default",!!column,label)
+  ggplot(df, aes(x = !!column)) +
   geom_histogram(bins = 25) +
-  labs(x = "Sale Price",
+  labs(x = column,
        y = "Number")
+}
+
+plot_histogram(data_tbl, price)
 
 skim(data_tbl)
 
@@ -49,22 +57,42 @@ data_vars <- data_tbl %>%
   group_by(city) %>%
   mutate(count = n()) %>% 
   ungroup() %>%
-  filter(count != 1) %>%
-  select(-count, -type) 
+  filter(count > 1) %>%
+  select(-count, -type)
   # select(-(count(city) %>% filter(n == 1) %>% pull(city)))
 #   select(where(is.numeric))
 
+#   
+data_vars %>% glimpse()
 # Fit a linear model to all data 
-fit_all <- lm(price ~ ., data = data_vars)
 
+fit_all <- lm(price ~ ., data = data_vars) ## * bang bang here ?? ----
+
+fit_linear <- function(data_tbl, response) {
+  response <- enquo(response)
+  lm(!!response ~ ., data = data_tbl) 
+  
+}
+
+fit_all <- fit_linear(data_vars, response_var)
 # Print the summary of the model
 summary(fit_all)
 
 # Split data ----
 # Split the data into training and test sets
-set.seed(42)
-splits <- data_vars %>%
-  initial_split(prop = 0.8, strata = city)  # substitute with response_var
+# set.seed(42)
+# splits <- data_vars %>%
+#   initial_split(prop = 0.8, strata = city)  # substitute with response_var
+
+split_data_tbl <- function(data, strata, prop = 0.8){
+  
+  strata <- enquo(strata)
+  set.seed(42)
+  splits <- data %>%
+    initial_split(prop = prop, strata = !!strata)
+}
+
+splits <- split_data_tbl(data_vars, response_var)
 
 data_train <- training(splits)
 data_test <- testing(splits)
@@ -82,7 +110,7 @@ lm_mod <- linear_reg() %>%
 
 # Train a linear regression model
 fit_lm <- lm_mod %>%
-  fit(log(price) ~ ., 
+  fit(log(response_var) ~ ., 
       data = data_train)
 
 # Print the model object

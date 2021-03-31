@@ -3,7 +3,6 @@ library(ggplot2movies)
 library(magrittr)
 library(magick)
 library(tidyverse)
-# install.packages("magick")
 data("movies")
 
 movies %>% glimpse()

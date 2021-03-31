@@ -1,0 +1,108 @@
+---
+title: "tidy_eval_quick_primer"
+author: "Matt Dancho"
+date: "July 26, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Library
+
+```{r}
+# Make sure you have ggplot2 version 3
+library(tidyverse)
+```
+
+# Data
+
+Make some data.
+
+```{r}
+# Setup data
+my_tibble <- tibble(
+    my_column_1 = 1:10,
+    my_column_2 = seq(1, 100, length.out = 10)
+)
+
+my_tibble
+```
+
+# Tidy Eval
+
+## Why quote?
+
+```{r, error = T}
+# returns an error because R tries to evaluate
+my_column_1
+```
+
+## How to quote single?
+
+```{r}
+# No error now, used outside of function
+quo(my_column_1)
+```
+
+## How to quote multiple?
+
+```{r}
+# No error, quosures stored in list
+quos(my_column_1, my_column_2)
+```
+
+## How to quote inside a function?
+
+Use `enquo()` if single variable or `enquos()` if multiple. 
+
+
+### enquo()
+
+Use when user specifies a single column. 
+
+```{r}
+# Custom plotting function (can do this in ggplot2 version 3.0.0 and later, which was just released)
+my_custom_plot <- function(data, x_column, y_column) {
+    
+    # Singular version: enquo()
+    x_column_expr <- enquo(x_column)
+    y_column_expr <- enquo(y_column)
+    
+    # Use !! to evaluate a single 
+    data %>%
+        ggplot(aes(!! x_column_expr, !! y_column_expr)) +
+        geom_point()
+    
+}
+```
+
+```{r}
+my_tibble %>%
+    my_custom_plot(x_column = my_column_1, y_column = my_column_2)
+```
+
+### enquos()
+
+Use when a user can specify multiple columns. 
+
+```{r}
+# Custom plotting function (can do this in ggplot2 version 3.0.0 and later, which was just released)
+my_custom_plot_2 <- function(data, ...) {
+    
+    # Plural version
+    columns_expr <- enquos(...)
+    
+    # Use !! to evaluate a single. Since plural, extract a single by subsetting the list by index
+    data %>%
+        ggplot(aes(!! columns_expr[[1]], !! columns_expr[[2]])) +
+        geom_point()
+    
+}
+```
+
+```{r}
+my_tibble %>%
+    my_custom_plot_2(my_column_1, my_column_2)
+```

@@ -36,7 +36,7 @@ my_select <- function(data, ...) {
   cols <- rlang::enquos(...)
   vars <- as.list(set_names(seq_along(data), names(data)))
   cols_char <- purrr::map(cols, rlang::eval_tidy, vars)
-  browser()
+  # browser()
   idx <- purrr::map_int(cols_char, function(x) {
     ifelse(is.character(x),vars[[x]],x)})
   # cols_char <- as.vector(cols, mode = "character")

@@ -3,6 +3,7 @@
 # Reference: https://supervised-ml-course.netlify.app/chapter1
 # 
 library(tidymodels)
+library(modeltime)
 library(modeldata)
 library(skimr)
 library(tidyverse)
@@ -18,9 +19,10 @@ glimpse(data_tbl)
 # data_tbl <- Sacramento
 
 response_var <- "Diabetic"
+exclude_var <- "PatientID"
 strata <- response_var
 # response_var <- quo(response_var)
-explanatory_var <- names(data_tbl %>% select(-all_of(response_var)))
+explanatory_var <- names(data_tbl %>% select(-all_of(response_var),-all_of(exclude_var)))
 
 # Need to figure out how to put vector value into ggplot
 
@@ -32,24 +34,42 @@ glimpse(data_tbl)
 
 
 
+# # Plot the histogram - OLD WAY
+# plot_histogram <- function(df, column){
+#   q <- rlang::enexpr(column)
+#   col_string <- rlang::as_string(q)
+#   col_string <- str_to_title(str_replace(col_string, pattern = "_", " "))
+#   column <- enquo(column)
+#   
+#   ggplot(df, aes(x = !!column)) +
+#   geom_histogram(bins = 25) +
+#   labs(x = col_string,
+#        y = "Number")
+# }
+
+
 # Plot the histogram
 plot_histogram <- function(df, column){
-  q <- rlang::enexpr(column)
-  col_string <- rlang::as_string(q)
-  col_string <- str_to_title(str_replace(col_string, pattern = "_", " "))
-  column <- enquo(column)
+
+  col_string <- as_string({{column}}) # Method 2 - use for indirect quoting of variables
   
-  ggplot(df, aes(x = !!column)) +
-  geom_histogram(bins = 25) +
-  labs(x = col_string,
-       y = "Number")
+  ggplot(df, aes(x = {{column}})) +
+    geom_histogram(bins = 25) +
+    labs(x = col_string,
+         y = "Number")
 }
 
-plot_histogram(data_tbl, Diabetic)
+# response_var = "Diabetic"
+
+plot_histogram(data_tbl, sym(response_var))
 
 skim(data_tbl)
 
 # car_train <- readRDS("data/c1_train_10_percent.rds")
+# Setup models
+parsnip::svm_poly(
+  mode = "classification"
+)
 
 lm_mod <- linear_reg() %>%
   set_engine("lm")
@@ -87,11 +107,96 @@ decision_tree() %>%
 
 # Data cleansing for diabetes dataset
 data_vars <- data_tbl %>%
-  select(-PatientID) %>%
-  mutate(Diabetic = factor(Diabetic))
+  select(-all_of(exclude_var)) %>%
+  # mutate(Diabetic = factor(Diabetic))
+  # mutate(Diabetic = Diabetic %>% as_factor())
+  mutate({{response_var}} := sym(response_var) %>% as_factor())
 
+mutate({{response_var}} := factor(sym(response_var)))
 #   
 data_vars %>% glimpse()
+
+data_vars %>% count(Diabetic)
+# Split data ----
+# Split the data into training and test sets
+# set.seed(42)
+# splits <- data_vars %>%
+#   initial_split(prop = 0.8, strata = city)  # substitute with response_var
+
+split_data_tbl <- function(data, strata, prop = 0.8){
+  
+  # strata <- enquo(strata)
+  set.seed(42)
+  splits <- data %>%
+    initial_split(prop = prop, strata = all_of({{strata}}))
+  # initial_split(prop = prop, strata = all_of(!!strata))
+}
+
+splits <- split_data_tbl(data_vars, response_var)
+
+data_train <- training(splits)
+data_test <- testing(splits)
+
+glimpse(data_train)
+glimpse(data_test)
+
+# Recipe baseline ---------------------------------------------------------
+
+# Method 1
+# recipe_spec_base_fn <- function(data, response) {
+#   # browser()
+#   q <- rlang::enexpr(response)
+#   col_string <- rlang::as_string(q)
+#   formula <- as.formula(str_c(col_string,"~ ."))
+#   recipe(formula, data = training(data)) 
+# }
+
+# Method 2
+recipe_spec_base_fn <- function(data, response) {
+  
+  # q <- rlang::enexpr(response) # Method 1 - use for direct quoting of variables
+  # col_string <- rlang::as_string(q) # Method 1
+  col_string <- as_string({{response}}) # Method 2 - use for indirect quoting of variables
+  formula <- as.formula(str_c(col_string,"~ ."))
+  recipe(formula, data = training(data)) 
+}
+
+var_summary_new <- function(data, var, ...) {
+  
+  data %>%
+    group_by(...) %>%
+    summarise(
+      n   = n(), 
+      min = min({{ var }}), 
+      max = max({{ var }})
+    ) %>%
+    ungroup()
+}
+
+# response_var
+# response_var <- sym(response_var)
+
+# Replace this
+# recipe(Diabetic ~ ., data = training(splits)) # Works
+# recipe_spec_base_fn(splits, Diabetic) # Works with method 1
+# recipe_spec_base_fn(splits, "Diabetic") # Works with method 1
+# With Method 2 ----
+recipe_spec_base_fn(splits, response_var) # Fails with method 1 but works with method 2
+
+# response_var is supplied to function by user via Shiny app
+
+  # Time series signature
+  # step_timeseries_signature(optin_time) %>%
+  
+  # step_rm(matches("(iso)|(xts)|(hour)|(minute)|(second)|(am.pm)")) %>%
+  
+  # Standardise large numeric features
+  step_normalize(matches("(index.num)|(year)|(yday)")) %>%
+  
+  # Dummary variable - One hot encoding
+  step_dummy(all_nominal(), one_hot = TRUE) %>%
+  
+
 
 
 # Regress Workflow --------------------------------------------------------
@@ -120,27 +225,7 @@ fit_all <- fit_linear(data_vars, response_var)  # Doesn't work
 # Print the summary of the model
 summary(fit_all)
 
-# Split data ----
-# Split the data into training and test sets
-# set.seed(42)
-# splits <- data_vars %>%
-#   initial_split(prop = 0.8, strata = city)  # substitute with response_var
 
-split_data_tbl <- function(data, strata, prop = 0.8){
-  
-  strata <- enquo(strata)
-  set.seed(42)
-  splits <- data %>%
-    initial_split(prop = prop, strata = all_of(!!strata))
-}
-
-splits <- split_data_tbl(data_vars, response_var)
-
-data_train <- training(splits)
-data_test <- testing(splits)
-
-glimpse(data_train)
-glimpse(data_test)
 # 
 # car_train <- readRDS("data/c1_train.rds")
 # car_test <- readRDS("data/c1_test.rds")
@@ -152,7 +237,7 @@ lm_mod <- linear_reg() %>%
 
 # Train a linear regression model
 fit_lm <- lm_mod %>%
-  fit(log1p(response_var) ~ ., 
+  fit(log(response_var) ~ ., 
       data = data_train)
 
 # Print the model object
@@ -160,9 +245,12 @@ fit_lm
 
 
 # Build a random forest model specification
-rf_mod <- rand_forest() %>%
-  set_engine("randomForest") %>%
-  set_mode("classification")
+rf_mod <- rand_forest(
+  mode = "classification"
+) %>%
+  set_engine("randomForest") 
+
+wkflw_rf_
 
 # Train a random forest model
 fit_rf <- rf_mod %>%

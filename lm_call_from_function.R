@@ -44,14 +44,17 @@ mtcars %>%
 fit_linear_1 <- function(data, response) {
   
   if (is.character(response)){
-    # rlang::parse_expr(response)
-    formula <- str_c(response,"~ .")
+    formula <- as.formula(str_c(response,"~ ."))
     lm(formula, data = data)
-  } else {
-    q <- rlang::enexpr(response)
-    col_string <- rlang::as_string(q)
-    formula <- str_c(col_string,"~ .")
-    lm(formula, data = data) 
+    #
+    } else {
+      formula <- as.formula(str_c({{response}},"~ ."))
+      lm(formula, data = data)
+  # } else {
+  #   q <- rlang::enexpr(response)
+  #   col_string <- rlang::as_string(q)
+  #   formula <- str_c(col_string,"~ .")
+  #   lm(formula, data = data) 
     }
 }
 

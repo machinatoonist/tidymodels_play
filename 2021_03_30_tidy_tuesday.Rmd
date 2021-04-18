@@ -18,6 +18,10 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library(tidyverse)
 library(tidytuesdayR)
+library(plotly)
+library(timetk)
+library(modeltime)
+library(lubridate)
 
 ```
 
@@ -27,7 +31,7 @@ Dowload the weekly data and make available in the `tt` object.
 
 ```{r Load}
 
-tt <- tt_load("2021-03-23")
+tt <- tt_load("2021-04-13")
 
 ```
 
@@ -53,6 +57,8 @@ Take an initial look at the format of the data available.
 tt %>% 
   map(glimpse)
 
+
+
 ```
 
 # Wrangle
@@ -61,8 +67,37 @@ Explore the data and process it into a nice format for plotting! Access each dat
 
 ```{r Wrangle}
 
+processed_data_tbl <- tt$post_offices %>% 
+  select(name, state, county1, established:continuous,
+         coordinates, latitude, longitude, gnis_elev_in_m)
 
 
+processed_data_tbl %>%
+  filter(coordinates == TRUE) %>%
+  filter(nchar(established) == 4) %>%
+  filter(nchar(discontinued) == 4 | is.na(discontinued)) %>%
+  arrange(order_by = established) %>% 
+  mutate(established_year = ymd(established, truncated = 2L),
+         discontinued_year = ymd(discontinued, truncated = 2L),
+         active_post_offices = case_when(
+           is.na(discontinued_year) ~ 1,
+           TRUE ~ 0),
+         cumulative_active = cumsum(active_post_offices)
+         ) %>% 
+  pivot_longer(cols = c(established_year, discontinued_year), names_to = "label", values_to = "year") %>%
+  group_by(label) %>%
+  summarize_by_time(year, .by = "year",
+                    number_post_offices = n(),
+                    still_active_post_offices = cumulative_active
+                    # ,log_number_post_offices = log(n())
+                    ) %>% ungroup() %>%
+  mutate(cumulative_events = cumsum(number_post_offices)) %>% ungroup() %>% tail(10)
+  
+  # mutate(label_text = str_glue("Number Post Offices: {scales::comma(number_post_offices, accuracy = 1)}")) %>%
+  plot_time_series(.date_var = year, .value = still_active_post_offices, .smooth = F,
+                   .color_var = label,
+                   .title = "Post Office Lifecycle in US",
+                   .y_lab = "Number of Post Offices")
 ```
 
 
@@ -72,7 +107,86 @@ Using your processed dataset, create your unique visualization.
 
 ```{r Visualize}
 
+prep_data <- processed_data_tbl %>%
+  filter(coordinates == TRUE) %>%
+  filter(discontinued <= 2010) %>% 
+  group_by(state) %>%
+  summarise(number_post_offices = n(),
+            oldest_post_office = min(established, na.rm = T),
+            newest_post_office = max(established, na.rm = T),
+            average_elevation = mean(gnis_elev_in_m, na.rm = T)
+            ) %>% 
+  ungroup() %>%
+  mutate(label_text = str_glue("State: {state}
+                               Number: {scales::comma(number_post_offices, accuracy = 1)}"))
 
+prep_data %>% plot_geo(locationmode = "USA-states") %>%
+  
+    add_trace(z         = ~number_post_offices, 
+              locations = ~state, 
+              color     = ~number_post_offices,
+              text      = ~label_text,
+              colors    = "Blues") %>%
+    layout(
+        geo = list(
+            scope = "usa",
+            projection = list(type = "albers usa"),
+            showlakes  = TRUE,
+            lakecolor  = toRGB("white"))
+        )
+
+processed_data_tbl %>% 
+  filter(established == 1901) %>%
+  plot_geo(locationmode = "USA-states") %>%
+    add_markers(
+      x         = ~longitude, 
+      y         = ~latitude, 
+      color     = ~state,
+      colors    = "Accent",
+      size      = 0.001,
+      text      = ~paste(name),
+      hoverinfo = "text"
+    ) %>%
+    layout(
+        geo = list(
+            scope = "usa",
+            projection = list(type = "albers usa"),
+            showlakes  = TRUE,
+            lakecolor  = toRGB("white"))
+        ) 
+
+
+summarize
+
+
+geo_plot_tbl <- reactive({
+
+  processed_data_filtered_tbl() %>%
+
+    group_by(state) %>%
+    summarise(total_revenue = sum(extended_price)) %>%
+    ungroup() %>%
+    mutate(label_text = str_glue("State: {state}
+                                 Revenue: {scales::dollar(total_revenue)}"))
+
+})
+?plot_geo
+
+  geo_plot_tbl() %>%
+    plot_geo(locationmode = "USA-states") %>%
+    add_trace(z         = ~total_revenue, 
+              locations = ~state, 
+              color     = ~total_revenue,
+              text      = ~label_text,
+              colors    = "Blues") %>%
+    layout(
+        geo = list(
+            scope = "usa",
+            projection = list(type = "albers usa"),
+            showlakes  = TRUE,
+            lakecolor  = toRGB("white")
+        )
+    )
   
 ```
 

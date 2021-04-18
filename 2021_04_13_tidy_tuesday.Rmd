@@ -1,0 +1,252 @@
+---
+title: "TidyTemplate"
+date: 2021-04-18
+output: html_output
+---
+
+# TidyTuesday
+
+Join the R4DS Online Learning Community in the weekly #TidyTuesday event!
+Every week we post a raw dataset, a chart or article related to that dataset, and ask you to explore the data.
+While the dataset will be “tamed”, it will not always be tidy! As such you might need to apply various R for Data Science techniques to wrangle the data into a true tidy format.
+The goal of TidyTuesday is to apply your R skills, get feedback, explore other’s work, and connect with the greater #RStats community!
+As such we encourage everyone of all skills to participate!
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+library(ggthemes)
+library(historydata)
+theme_set(theme_light())
+
+```
+
+# Load the weekly Data
+
+Dowload the weekly data and make available in the `tt` object.
+
+```{r Load}
+
+tt <- tt_load("2021-04-13")
+
+tt$post_offices %>% glimpse()
+
+tt$post_offices %>%
+  count(id, sort = TRUE)
+
+tt$post_offices %>%
+  add_count(name, orig_name, state, county1, sort = TRUE) %>% 
+  filter(n >=2) %>%
+  arrange(name, orig_name, state, county1)
+
+post_offices <- tt$post_offices %>%
+  select(name, state, county1, established, discontinued,
+         continuous, stamp_index, id, coordinates,
+         latitude, longitude, gnis_dist, gnis_county, gnis_state) %>%
+  filter(established >= 1639,
+         is.na(discontinued) | discontinued >= established)
+
+# Post offices may have closed and then reopened
+
+
+```
+```{r}
+post_office_years <- post_offices %>%
+  filter(established <= 2021) %>%
+  select(name, state, established, discontinued) %>%
+  replace_na(list(discontinued = 2003)) %>%
+  filter(discontinued <= 2021,
+         established >= 1750) %>%
+  mutate(year = map2(established, discontinued, seq)) %>%
+  unnest(year)
+
+```
+
+```{r}
+post_offices_cumulative <- post_office_years %>%
+  count(year, 
+        state = fct_lump(state, 16),
+        name = "n_post_offices") 
+
+post_offices_cumulative %>%
+  mutate(state = fct_reorder(state, -n_post_offices, .fun = sum)) %>%  # order states by number
+  filter(state != "Other") %>%
+  ggplot(aes(year, n_post_offices, fill = state)) +
+  geom_area() +
+  labs(x = "Year",
+       y = "# of post offices currently active in US",
+       title = "Where and when were the most post offices opened?") +
+  facet_wrap(~ state) +
+  theme(legend.position = "none")
+  
+  
+```
+```{r}
+post_office_closures <- post_offices %>%
+  filter(established <= 2021) %>%
+  filter(discontinued <= 2021,
+         discontinued >= 1750,
+         established >= 1750) %>%
+  filter(!is.na(discontinued)) %>%
+  count(state = fct_lump(state, 16),
+        decade = 10 * discontinued %/% 10,  # floor years to decades
+        name = "n_closures") %>%
+  mutate(state = fct_reorder(state, -n_closures, .fun = sum)) %>% 
+  filter(state != "Other") 
+
+post_office_closures %>%
+  ggplot(aes(decade, n_closures, fill = state)) +
+  geom_area() +
+  labs(x = "Year",
+       y = "# of post offices closed in each decade",
+       title = "When and where were the most post offices closed?") +
+  facet_wrap(~ state) +
+  theme(legend.position = "none")
+
+```
+```{r}
+
+post_office_closures %>%
+  inner_join(post_offices_cumulative, by = c("state", "decade" = "year")) %>%
+  mutate(pct_closed = n_closures/n_post_offices) %>%
+  filter(n_post_offices >= 50) %>%
+  filter(state %in% c("KY", "PA")) %>%
+  ggplot(aes(decade, pct_closed, color = state)) +
+  geom_line() +
+  scale_y_continuous(labels = percent) +
+  labs(y = "% of post offices open at start of decade that closed")
+
+```
+```{r}
+
+post_office_years %>%
+  filter(year == 2003) %>%
+  count(state, sort = TRUE) 
+
+states_map <- map_data("state") %>%
+  as_tibble() %>%
+  mutate(state = state.abb[match(region, str_to_lower(state.name))]) %>%
+  replace_na(list(state = "DC"))
+
+state.x77
+state.abb
+state.name
+
+state_pop_2000 <- us_state_populations %>% 
+  filter(year == 2000) %>%
+  mutate(state = state.abb[match(state, state.name)]) %>%
+  replace_na(list(state = "DC"))
+
+state_pops <- us_state_populations %>% 
+  mutate(state = state.abb[match(state, state.name)]) %>%
+  replace_na(list(state = "DC"))
+
+post_office_years %>%
+  filter(year == 2000) %>%
+  count(state, sort = TRUE) %>%
+  inner_join(state_pop_2000, by = "state") %>%
+  mutate(post_office_density = n/(population / 1e6)) %>%
+  inner_join(states_map, by = "state") %>%
+  
+  ggplot(aes(long, lat, group = group, fill = post_office_density)) +
+  geom_polygon() +
+  scale_fill_gradient2(low = "blue", high = "red", midpoint = 250) +
+  theme_map() +
+  labs(fill = "Density of post offices/M people")
+
+```
+```{r}
+post_offices_cumulative_all <- post_office_years %>%
+  count(
+    year,
+    state,
+    name = "n_post_offices"
+  )
+
+post_offices_cumulative_all %>%
+  inner_join(state_pops, by = c("year", "state")) %>%
+  filter(year %in% c(1800, 1850, 1900, 1950)) %>%
+  inner_join(states_map, by = "state") %>%
+  mutate(post_office_density = n_post_offices/(population / 1e6)) %>%
+  
+  ggplot(aes(long, lat, group = group, fill = n_post_offices)) +
+  geom_polygon() +
+  scale_fill_gradient2(low = "blue", high = "red", midpoint = 2000) +
+  facet_wrap( ~ year) +
+  theme_map() +
+  labs(fill = "Post offices")
+
+```
+
+
+
+
+
+We'll be doing an animated map
+* with dots
+* as a choropleth by state
+* maybe compare to population (post offices per person in state or county?)
+
+
+
+
+# Readme
+
+Take a look at the readme for the weekly data to get insight on the dataset.
+This includes a data dictionary, source, and a link to an article on the data.
+
+```{r Readme, eval = interactive()}
+
+tt
+
+```
+
+
+# Glimpse Data
+
+Take an initial look at the format of the data available.
+
+```{r Glimpse}
+
+tt %>% 
+  map(glimpse)
+
+```
+
+# Wrangle
+
+Explore the data and process it into a nice format for plotting! Access each dataset by name by using a dollarsign after the `tt` object and then the name of the data set.
+
+```{r Wrangle}
+
+
+
+```
+
+
+# Visualize
+
+Using your processed dataset, create your unique visualization.
+
+```{r Visualize}
+
+
+  
+```
+
+# Save Image
+
+Save your image for sharing. Be sure to use the `#TidyTuesday` hashtag in your post on twitter! 
+
+```{r}
+
+# This will save your most recent plot
+ggsave(
+  filename = "My TidyTuesday Plot.png",
+  device = "png")
+
+```

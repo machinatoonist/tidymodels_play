@@ -21,7 +21,9 @@ library(tidytuesdayR)
 library(scales)
 library(ggthemes)
 library(historydata)
-theme_set(theme_light())
+library(gganimate)
+library(viridis)
+theme_set(theme_economist())
 
 ```
 
@@ -50,6 +52,8 @@ post_offices <- tt$post_offices %>%
   filter(established >= 1639,
          is.na(discontinued) | discontinued >= established)
 
+post_offices %>% glimpse()
+
 # Post offices may have closed and then reopened
 
 
@@ -57,11 +61,15 @@ post_offices <- tt$post_offices %>%
 ```{r}
 post_office_years <- post_offices %>%
   filter(established <= 2021) %>%
-  select(name, state, established, discontinued) %>%
+  select(name, state, established, discontinued, latitude, longitude) %>%
   replace_na(list(discontinued = 2003)) %>%
   filter(discontinued <= 2021,
          established >= 1750) %>%
   mutate(year = map2(established, discontinued, seq)) %>%
+  mutate(status = case_when(
+    discontinued == 2003 ~ "Open",
+    TRUE ~ "Closed"
+  )) %>%
   unnest(year)
 
 ```
@@ -167,22 +175,66 @@ post_offices_cumulative_all <- post_office_years %>%
     name = "n_post_offices"
   )
 
-post_offices_cumulative_all %>%
-  inner_join(state_pops, by = c("year", "state")) %>%
+by_state_year <- post_offices_cumulative_all %>%
+  left_join(state_pops, by = c("year", "state")) %>%
+  mutate(post_office_density = n_post_offices/(population / 1e6))
+
+by_state_year %>%
+  # filter(year %% 80 == 0) %>% 
   filter(year %in% c(1800, 1850, 1900, 1950)) %>%
   inner_join(states_map, by = "state") %>%
-  mutate(post_office_density = n_post_offices/(population / 1e6)) %>%
   
   ggplot(aes(long, lat, group = group, fill = n_post_offices)) +
   geom_polygon() +
-  scale_fill_gradient2(low = "blue", high = "red", midpoint = 2000) +
+  scale_fill_gradient2(low = "blue", high = "red", 
+                       mid = "pink", midpoint = 2000) +
   facet_wrap( ~ year) +
   theme_map() +
   labs(fill = "Post offices")
 
 ```
 
+```{r}
 
+by_state_year %>%
+  filter(year %% 4 == 0) %>%
+  inner_join(states_map, by = "state") %>%
+  
+  ggplot(aes(long, lat, group = group, fill = n_post_offices)) +
+  geom_polygon() +
+  scale_fill_gradient2(low = "blue", high = "red", 
+                       mid = "pink", midpoint = 2000) +
+  transition_manual(year) +
+  theme_map() +
+  labs(fill = "Post offices",
+       title = "{current_frame} ")
+
+anim_save("media/post_offices_over_time.gif")
+
+```
+
+
+```{r}
+post_office_years %>%
+  filter(year %% 2 == 0,
+  # filter(year == 1900,
+         !state %in% c("HI", "AK")) %>% 
+  ggplot(aes(longitude, latitude)) +
+  geom_point(size = 0.1, alpha = 0.25) +
+  transition_manual(year) +
+  borders("state") +
+  theme_map() +
+  coord_map() +
+  theme(legend.position = "bottom") +
+  # scale_color_viridis(discrete = TRUE, option = "A", direction = -1) +
+  labs(title = "US Post Offices: {current_frame} ",
+       # subtitle = "Grouped by Status in 2003",
+       x = "Longitude",
+       y = "Latitude")
+  
+
+anim_save("media/post_office_location_over_time_bw.gif")
+```
 
 
 

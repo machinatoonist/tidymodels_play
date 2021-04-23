@@ -1,0 +1,478 @@
+---
+title: "TidyTemplate"
+date: 2021-04-23
+output: html_output
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+library(skimr)
+library(lubridate)
+library(tidytext)
+library(snakecase)
+library(tidylo)
+library(widyr)
+library(timetk)
+library(tidygraph)
+library(ggraph)
+library(glmnet)
+theme_set(theme_light())
+
+```
+
+# New Methods used:
+## fct_lump(factor, n)
+- A factor to consolidate into at least abs(n) most common values. If n is negative it preserves the least common factors
+
+## separate_rows(listed_in, sep = ", ") 
+- This separates the specified column into new columns given in c() using sep
+
+## count()
+- Groups by column and counts the unique values that is roughly approximate to 
+group_by() followed by summarise(n = n())
+
+## separate_rows(listed_in, sep = ", ")
+- Unnests values in a column into separate rows using sep = " "
+
+## fct_reorder(country, n))
+- Reorders a factor using the second variable specified which in this case is the number of rows (n) from using count()
+
+## conf_low = qbeta(0.025, n_mature + .5, n - n_mature + .5)
+## conf_high = qbeta(0.975, n_mature + .5, n - n_mature + .5))
+- Jefferies Confidence Interval - qbeta is a quantile of the beta distn.  proc.test
+
+## geom_errorbar(aes(xmin = conf_low, xmax = conf_high))
+- Error bars using the calculated confidence interval
+
+## expand_limits(x = 0)
+- expand limits of scale as specified
+
+## unnest_tokens(word, description)
+- Split a column into tokens, flattening the table into one-token-per-row. This function supports non-standard evaluation through the tidyeval framework.  Default token = "words", options include "characters", "sentences", "paragraphs" etc
+
+## anti_join(stop_words, by = "word") 
+  - return all rows from x without a match in y
+  - used in a pipe the above example sets y = stop_words which is tibble of common words that don't provide much information
+  
+## bind_log_odds(type, word, n) %>%
+- Function from the tidylo package
+- Calculate and bind posterior log odds ratios
+
+## add_count(word, name = "word_total")
+- Adds column to table with specified name along 
+
+## distinct(type, title, word)
+- Returns unique combinations of supplied columns
+
+## pairwise_cor(word, title, sort = TRUE) %>%
+- Used in a pipe above to calculate the correlation between 
+
+```{r}
+gear_counts <- mtcars %>%
+  count(vs, gear)
+
+gear_counts
+
+# find the number of gears most characteristic of each engine shape `vs`
+
+regularized <- gear_counts %>%
+  bind_log_odds(vs, gear, n)
+
+regularized
+
+unregularized <- gear_counts %>%
+  bind_log_odds(vs, gear, n, uninformative = TRUE, unweighted = TRUE)
+
+unregularized
+```
+
+```{r}
+# Creating data frames
+
+t <- timetk::tk_make_timeseries(start_date = "2021-01-01", 
+                                by = "days",
+                                length_out = 120)
+
+x  <- seq(from = 0, to = 100, length.out = length(t))
+
+y <- runif(length(x), min = 0, max = 1)
+
+df <- data.frame(t, x, y)
+
+df
+
+```
+
+
+```{r Load}
+
+tt <- tt_load("2021-04-20")
+
+netflix_titles <- tt$netflix_titles %>%
+  separate(col = duration, into = c("duration", "duration_units"), sep = " ", convert = TRUE) %>%
+  mutate(date_added = mdy(date_added),
+         year_added = year(date_added)) %>%
+  filter(!is.na(year_added)) %>%
+  filter(!is.na(rating))
+
+netflix_titles%>% glimpse()
+
+netflix_titles %>%
+  count(type)
+
+netflix_titles %>%
+  count(release_year)
+
+netflix_titles %>%
+  summarise(min(release_year), max(release_year))
+
+netflix_titles %>%
+  count(show_id)
+
+netflix_titles %>% skim()
+
+```
+
+```{r}
+
+netflix_titles %>%
+  ggplot(aes(release_year, fill = type)) +
+  geom_histogram(binwidth = 5) +
+  facet_wrap(~ type, ncol = 1, scales = "free_y")
+
+netflix_titles %>%
+  # count(decade = 2 * release_year %/% 2, type) %>%
+  count(year = release_year, type) %>%
+  group_by(type) %>%
+  mutate(
+    percent = n / sum(n)
+  ) %>%
+  ggplot(aes(year, percent, color = type)) +
+  geom_line()
+
+```
+
+```{r}
+netflix_titles %>%
+  filter(type == "Movie") %>%
+  mutate(decade = 10 * release_year%/% 10) %>%
+  ggplot(aes(decade, duration, group = decade)) +  # Because decade is numeric we need to use group
+  geom_boxplot()
+```
+
+```{r}
+
+summarise_titles <- function(tbl) {
+  tbl %>%
+  summarise(n = n(),
+            median_duration = median(duration),
+            median_year = median(release_year)) %>%
+  arrange(desc(n))
+}
+
+```
+
+```{r}
+
+netflix_titles %>%
+  count(rating, sort = TRUE)
+
+# `%notin%` <- Negate(`%in%`)
+
+netflix_titles %>%
+  separate_rows(listed_in, sep = ", ") %>% 
+  # filter(duration_units %notin% c("season", "Season", "Seasons")) %>%
+  group_by(type, genre = listed_in) %>%
+  summarise_titles() %>%
+  filter(type == "Movie") %>%
+  filter(genre != "Movies") %>%
+  mutate(genre = fct_reorder(genre, median_duration, .desc = FALSE)) %>%
+  ggplot(aes(median_duration, genre)) +
+  geom_col()
+
+```
+
+Date added
+- How many per year
+- Don't have how many removed
+
+```{r}
+netflix_titles %>%
+  filter(!is.na(date_added)) %>%
+  arrange(date_added) %>%
+  select(type, title, date_added)
+
+netflix_titles %>%
+  filter(!is.na(date_added)) %>%
+  # mutate(year_added = pmax(year(date_added), 2015)) %>%  # Added into data pipeline
+  count(year_added, type) %>%
+  ggplot(aes(year_added, n, fill = type)) +
+  geom_area()
+
+netflix_titles %>%
+  mutate(year_added = pmax(year_added, 2015)) %>%
+  filter(!is.na(date_added), !is.na(rating)) %>%
+  # filter(type == "Movie") %>%
+  group_by(type) %>%
+  mutate(rating = fct_lump(rating, 5)) %>%
+  ungroup() %>%
+  count(type, year_added, rating) %>%
+  group_by(type, year_added) %>%
+  mutate(percent = n / sum(n)) %>%
+  ggplot(aes(year_added, percent, fill = rating)) +
+  geom_area() +
+  facet_wrap(~ type)
+
+```
+```{r}
+# How does the customer acquisition strategy for Netflix differ by country
+netflix_titles %>%
+  filter(!is.na(country)) %>%
+  count(country = fct_lump(country, 16),
+        type,
+        sort = TRUE) %>%
+  mutate(country = fct_reorder(country, n)) %>%
+    ggplot(aes(n, country, fill = type)) +
+    geom_col()
+
+netflix_titles %>%
+  filter(!is.na(country)) %>%
+  filter(type == "Movie") %>%
+  group_by(country) %>%
+  summarise_titles()
+  
+```
+```{r}
+netflix_titles %>%
+  filter(rating == "R") %>%
+  count(country, sort = TRUE)
+
+# What is we look at rating and country?
+# I wonder if did both type and country
+# Jefferies Confidence Interval - qbeta is a quantile of the beta distn.  proc.test
+netflix_titles %>%
+  filter(!is.na(rating), !is.na(country)) %>%
+  group_by(type, country = fct_lump(country, 9)) %>%
+  summarise(n_mature = sum(rating %in% c("R", "TV-MA", "NC-17")),
+            n = n(),
+            .groups = "drop") %>%
+  mutate(pct_mature = n_mature / n,
+         conf_low = qbeta(0.025, n_mature + .5, n - n_mature + .5),
+         conf_high = qbeta(0.975, n_mature + .5, n - n_mature + .5)) %>%
+  ggplot(aes(pct_mature, country, color = type)) +
+  geom_point(aes(size = n)) +
+  geom_errorbar(aes(xmin = conf_low, xmax = conf_high)) +
+  scale_x_continuous(labels = percent) +
+  expand_limits(x = 0) +
+  labs(x = "% of titles that are R/TV-MA")
+
+```
+
+```{r}
+
+netflix_titles %>%
+  filter(is.na())
+
+words_unnested <- netflix_titles %>%
+  unnest_tokens(word, description) %>%
+  anti_join(stop_words, by = "word") 
+
+words_unnested %>%
+  count(type, word, sort = TRUE) %>%
+  mutate(type = to_snake_case(type)) %>%
+  # spread(type, n, fill = 0) %>%
+  pivot_wider(names_from = type, values_from = n, values_fill = 0) %>%
+  mutate(total = movie + tv_show) %>%
+  arrange(desc(total)) %>%
+  head(50) %>%
+  ggplot(aes(movie, tv_show)) +
+  geom_point() +
+  geom_text(aes(label = word), vjust = 1, hjust = 1) +
+  scale_x_log10() +
+  scale_y_log10()
+
+# What is the relative ratio of words
+# What words are over-represented in TV vs movies
+# log frequency in TV vs in movie
+words_unnested %>% 
+  count(type, word) %>%
+  bind_log_odds(set = type, feature = word, n) %>%
+  arrange(desc(log_odds_weighted)) %>%
+  group_by(type) %>%
+  top_n(10, log_odds_weighted) %>% 
+  ungroup() %>%
+  mutate(word = fct_reorder(word, log_odds_weighted)) %>%
+  ggplot(aes(log_odds_weighted, word)) +
+  geom_col() +
+  facet_wrap(~ type, scales = "free_y") 
+
+?unnest_tokens
+```
+
+```{r}
+# What words tend to appear together
+words_unnested %>%
+  distinct(type, title, word) %>%
+  add_count(word, name = "word_total") %>%  
+  filter(word_total >= 30) %>%  # remove really rare words
+  pairwise_cor(word, title, sort = TRUE) %>%
+  filter(correlation >= .1) %>%
+  igraph::graph_from_data_frame() %>%
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(alpha = correlation)) +
+  geom_node_point() +
+  geom_node_text(aes(label = name),
+                 repel = TRUE) +
+  theme(legend.position = "none")
+
+```
+
+```{r}
+word_genre_log_odds <- words_unnested %>%
+  distinct(type, title, word, genre = listed_in) %>%
+  add_count(word, name = "word_total") %>%
+  filter(word_total >= 25) %>%
+  separate_rows(genre, sep = ", ") %>%
+  filter(fct_lump(genre, 9) != "Other") %>%
+  count(genre, word) %>%
+  bind_log_odds(genre, word, n)
+
+```
+
+```{r}
+word_genre_log_odds %>%
+  group_by(genre) %>%
+  top_n(10, log_odds_weighted) %>%
+  ungroup() %>%
+  mutate(word = reorder_within(word, log_odds_weighted, genre)) %>%
+  ggplot(aes(log_odds_weighted, word, fill = genre)) +
+  geom_col() +
+  facet_wrap(~genre, scales = "free_y") +
+  scale_y_reordered() +
+  labs(
+    x = "Log-odds of word's specificity to genre",
+    y = ""
+  )
+  theme(legend.position = "none")
+  
+```
+
+## Lasso regression
+Prediction if a show has a mature rating based on the words it uses
+
+```{r}
+word_ratings <-  words_unnested %>%
+  count(type, title, rating, word) %>%
+  filter(!is.na(rating)) %>%
+  mutate(mature = rating %in% c("TV-MA", "R", "NC-17")) %>%
+  add_count(word, name = "word_total") %>%
+  filter(word_total >= 30)
+
+
+```
+
+```{r}
+word_matrix <- word_ratings %>%
+  cast_sparse(title, word, n)
+
+as_tibble(rownames(word_matrix)) %>% distinct()
+word_matrix
+
+y <- word_ratings$mature[match(rownames(word_matrix), word_ratings$title)]
+
+word_ratings$mature[match(x = rownames(word_matrix), word_ratings$title)]
+
+mean(y)
+word_ratings %>% glimpse()
+
+word_ratings %>% select(title)
+as_tibble(rownames(word_matrix)) %>%
+  inner_join(word_ratings, by = c("value" = "title"), keep = TRUE)
+
+p <- word_ratings %>%
+  filter(title %in% as.vector(rownames(word_matrix))) %>%
+  pull(mature)
+
+str(p)
+str(y)
+mean(p)
+mean(y)
+identical(y, p)
+
+mod <- cv.glmnet(word_matrix, y, family = "binomial")
+
+plot(mod)
+
+```
+
+
+
+
+
+
+
+
+
+
+# Readme
+
+Take a look at the readme for the weekly data to get insight on the dataset.
+This includes a data dictionary, source, and a link to an article on the data.
+
+```{r Readme, eval = interactive()}
+
+tt
+
+```
+
+
+# Glimpse Data
+
+Take an initial look at the format of the data available.
+
+```{r Glimpse}
+
+tt %>% 
+  map(glimpse)
+
+```
+
+# Wrangle
+
+Explore the data and process it into a nice format for plotting! Access each dataset by name by using a dollarsign after the `tt` object and then the name of the data set.
+
+```{r Wrangle}
+
+
+
+```
+
+
+# Visualize
+
+Using your processed dataset, create your unique visualization.
+
+```{r Visualize}
+
+
+  
+```
+
+# Save Image
+
+Save your image for sharing. Be sure to use the `#TidyTuesday` hashtag in your post on twitter! 
+
+```{r}
+
+# This will save your most recent plot
+ggsave(
+  filename = "My TidyTuesday Plot.png",
+  device = "png")
+
+```

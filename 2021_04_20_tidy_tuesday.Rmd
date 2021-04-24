@@ -22,6 +22,7 @@ library(timetk)
 library(tidygraph)
 library(ggraph)
 library(glmnet)
+library(broom)
 theme_set(theme_light())
 
 ```
@@ -117,7 +118,8 @@ tt <- tt_load("2021-04-20")
 netflix_titles <- tt$netflix_titles %>%
   separate(col = duration, into = c("duration", "duration_units"), sep = " ", convert = TRUE) %>%
   mutate(date_added = mdy(date_added),
-         year_added = year(date_added)) %>%
+         year_added = year(date_added),
+         mature = rating %in% c("TV-MA", "R", "NC-17")) %>%
   filter(!is.na(year_added)) %>%
   filter(!is.na(rating))
 
@@ -267,7 +269,7 @@ netflix_titles %>%
          conf_high = qbeta(0.975, n_mature + .5, n - n_mature + .5)) %>%
   ggplot(aes(pct_mature, country, color = type)) +
   geom_point(aes(size = n)) +
-  geom_errorbar(aes(xmin = conf_low, xmax = conf_high)) +
+  geom_errorbar(aes(xmin = conf_low, xmax = conf_high), width = .1) +
   scale_x_continuous(labels = percent) +
   expand_limits(x = 0) +
   labs(x = "% of titles that are R/TV-MA")
@@ -370,7 +372,7 @@ Prediction if a show has a mature rating based on the words it uses
 word_ratings <-  words_unnested %>%
   count(type, title, rating, word) %>%
   filter(!is.na(rating)) %>%
-  mutate(mature = rating %in% c("TV-MA", "R", "NC-17")) %>%
+  # mutate(mature = rating %in% c("TV-MA", "R", "NC-17")) %>%  # moved up to data processing
   add_count(word, name = "word_total") %>%
   filter(word_total >= 30)
 
@@ -378,36 +380,66 @@ word_ratings <-  words_unnested %>%
 ```
 
 ```{r}
-word_matrix <- word_ratings %>%
-  cast_sparse(title, word, n)
 
-as_tibble(rownames(word_matrix)) %>% distinct()
-word_matrix
+# Tokenise the cast and actors
+other_features <- netflix_titles %>%
+  select(title, director, cast, genre = listed_in, country) %>%
+  pivot_longer(names_to = "feature_type", 
+               values_to = "feature", 
+               cols = c("director", "cast", "genre", "country")) %>%
+  filter(!is.na(feature)) %>%
+  separate_rows(feature, sep = ", ") %>%
+  mutate(feature_type = str_to_title(feature_type)) %>%
+  unite(col = feature, feature_type, feature, sep = ": ") %>%
+  add_count(feature, name = "feature_count") %>%
+  filter(feature_count >= 10)
 
-y <- word_ratings$mature[match(rownames(word_matrix), word_ratings$title)]
+other_features
 
-word_ratings$mature[match(x = rownames(word_matrix), word_ratings$title)]
+# Sparse 
+feature_matrix <- word_ratings %>%
+  mutate(feature = paste("Description:", word)) %>%
+  bind_rows(other_features) %>%
+  cast_sparse(title, feature)
+
+dim(feature_matrix)
+
+# as_tibble(rownames(word_matrix)) %>% distinct()
+# word_matrix
+
+y <- netflix_titles$mature[match(rownames(feature_matrix), netflix_titles$title)]
+
+# word_ratings$mature[match(x = rownames(word_matrix), word_ratings$title)]
 
 mean(y)
 word_ratings %>% glimpse()
 
-word_ratings %>% select(title)
-as_tibble(rownames(word_matrix)) %>%
-  inner_join(word_ratings, by = c("value" = "title"), keep = TRUE)
+# word_ratings %>% select(title)
+# as_tibble(rownames(word_matrix)) %>%
+#   inner_join(word_ratings, by = c("value" = "title"), keep = TRUE)
+# 
+# p <- word_ratings %>%
+#   filter(title %in% as.vector(rownames(word_matrix))) %>%
+#   pull(mature)
 
-p <- word_ratings %>%
-  filter(title %in% as.vector(rownames(word_matrix))) %>%
-  pull(mature)
-
-str(p)
-str(y)
-mean(p)
-mean(y)
-identical(y, p)
-
-mod <- cv.glmnet(word_matrix, y, family = "binomial")
+mod <- cv.glmnet(feature_matrix, y, family = "binomial")
 
 plot(mod)
+
+mod
+
+# Which terms are most strongly predictive of mature movie?
+mod$glmnet.fit %>%
+  tidy() %>%
+  separate(term, c("feature_type", "feature"), sep = ": ") %>%
+  filter(lambda == mod$lambda.1se) %>%
+  top_n(40, abs(estimate)) %>%
+  mutate(feature = fct_reorder(feature, estimate)) %>%
+  ggplot(aes(estimate, feature, fill = feature_type)) +
+  geom_col() +
+  labs(x = "Coefficient: Does this make the title more likely to be TV-MA/R?", 
+       y = "",
+       fill = "Feature Type")
 
 ```
 
